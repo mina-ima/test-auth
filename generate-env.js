@@ -1,13 +1,11 @@
-// Simple generator to create env.js from env.local (not committed to git)
+// Simple generator to create env.js from process.env (preferred) or env.local (fallback)
 // Usage: node generate-env.js
-const fs = require("fs");
-const path = require("path");
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const envPath = path.resolve(__dirname, "env.local");
-if (!fs.existsSync(envPath)) {
-  console.error("env.local not found. Please create env.local with SUPABASE_URL and SUPABASE_ANON_KEY.");
-  process.exit(1);
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Very small .env parser (no dependencies): supports KEY=VALUE lines, ignores blanks/comments.
@@ -27,13 +25,20 @@ function parseEnvFile(filePath) {
   return result;
 }
 
-const parsed = parseEnvFile(envPath);
-const SUPABASE_URL = parsed.SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = parsed.SUPABASE_ANON_KEY || "";
-// Service key, sheet URLs are intentionally NOT exposed to the client.
+let SUPABASE_URL = process.env.SUPABASE_URL || "";
+let SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error("SUPABASE_URL or SUPABASE_ANON_KEY missing in env.local.");
+  const envPath = path.resolve(__dirname, "env.local");
+  if (fs.existsSync(envPath)) {
+    const parsed = parseEnvFile(envPath);
+    SUPABASE_URL = SUPABASE_URL || parsed.SUPABASE_URL || "";
+    SUPABASE_ANON_KEY = SUPABASE_ANON_KEY || parsed.SUPABASE_ANON_KEY || "";
+  }
+}
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error("SUPABASE_URL or SUPABASE_ANON_KEY missing. Set env vars or env.local.");
   process.exit(1);
 }
 

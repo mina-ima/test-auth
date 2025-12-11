@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "build": "node generate-env.js",
     "sync": "node sync-sheets-to-supabase.mjs"
   },
   "dependencies": {
