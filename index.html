@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supabase Auth Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      background: #f6f8fb;
+      color: #1f2a44;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+
+    .card {
+      width: min(420px, 92vw);
+      background: #fff;
+      padding: 32px 28px;
+      border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      letter-spacing: 0.4px;
+    }
+
+    p {
+      margin: 0 0 20px;
+      color: #4b5563;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 15px;
+      font-weight: 700;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    }
+
+    .btn-primary {
+      width: 100%;
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 30px rgba(37, 99, 235, 0.35);
+    }
+
+    .btn-ghost {
+      width: 100%;
+      background: #eef2ff;
+      color: #1f2a44;
+    }
+
+    .btn-ghost:hover {
+      background: #e0e7ff;
+    }
+
+    .status {
+      margin-bottom: 18px;
+      padding: 12px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      font-size: 14px;
+    }
+
+    #actions {
+      display: grid;
+      gap: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <h1>Supabase Auth</h1>
+    <p>Googleでログインして、状態を確認できます。</p>
+    <div id="status" class="status" role="status">読み込み中...</div>
+    <div id="actions"></div>
+  </div>
+
+  <!-- Optional: env.js (gitignored) should define window.__ENV__ from environment variables -->
+  <script src="./env.js"></script>
+  <script type="module">
+    // Supabase settings read from environment (populate via env.js using env vars)
+    const env = globalThis.__ENV__ || {};
+    const SUPABASE_URL = env.SUPABASE_URL || "";
+    const SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY || "";
+    const MAX_SHORTCUTS = 10;
+
+    const normalizeEmail = (val = "") => val.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
+
+    import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
+
+    const statusEl = document.getElementById("status");
+    const actionsEl = document.getElementById("actions");
+
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      statusEl.textContent = "環境変数からSupabaseの設定値を注入してください。";
+      actionsEl.innerHTML = "";
+      throw new Error("Supabase settings are empty.");
+    }
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: false, // do not keep sessions between page loads
+        autoRefreshToken: false,
+      },
+    });
+
+    const renderSignedOut = () => {
+      statusEl.textContent = "ログインしていません。";
+      actionsEl.innerHTML = `
+        <button class="btn-primary" id="login-btn">Googleでログイン</button>
+      `;
+
+      const loginBtn = document.getElementById("login-btn");
+      loginBtn?.addEventListener("click", async () => {
+        statusEl.textContent = "リダイレクトしています...";
+        await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: {
+            redirectTo: window.location.href,
+            queryParams: { prompt: "login" }, // force credential entry each time
+          },
+        });
+      });
+    };
+
+    const renderSignedIn = (email, shortcuts = [], canEdit = false) => {
+      statusEl.textContent = `ようこそ、${email} さん`;
+
+      // If no shortcuts, fall back to the previous hardcoded links.
+      const fallbackLinks =
+        email === "minamidenshi@gmail.com"
+          ? [
+              { label: "皆見電子ホームページへ", url: "https://www.mdk-j.com" },
+              { label: "ChizuPazzleへ", url: "https://chizupazzle.vercel.app" },
+            ]
+          : [{ label: "Googleサイトへ", url: "https://www.google.com" }];
+
+      const linksToRender = (shortcuts?.length ? shortcuts : fallbackLinks).slice(0, MAX_SHORTCUTS);
+
+      const linksMarkup = linksToRender
+        .map(
+          (link, idx) => `
+            <a class="btn-primary" id="shortcut-${idx}" href="${link.url}" target="_blank" rel="noopener noreferrer">${link.label}</a>
+          `
+        )
+        .join("\n");
+
+      actionsEl.innerHTML = `
+        ${linksMarkup}
+        <button class="btn-ghost" id="logout-btn">ログアウト</button>
+      `;
+
+      const logoutBtn = document.getElementById("logout-btn");
+      logoutBtn?.addEventListener("click", async () => {
+        statusEl.textContent = "ログアウトしています...";
+        await supabase.auth.signOut();
+      });
+    };
+
+    const fetchShortcuts = async (email) => {
+      const target = normalizeEmail(email || "");
+      try {
+        // Supabase: user_apps -> apps
+        const { data: userRows, error: userErr } = await supabase
+          .from("user_apps")
+          .select("app_no")
+          .eq("email", target)
+          .eq("allowed", true)
+          .limit(MAX_SHORTCUTS);
+
+        if (userErr) throw userErr;
+
+        const appNos = Array.from(new Set((userRows || [])
+          .map((row) => (row.app_no || "").trim())
+          .filter(Boolean)))
+          .slice(0, MAX_SHORTCUTS);
+
+        if (!appNos.length) {
+          return { shortcuts: [], canEdit: false };
+        }
+
+        const { data: appRows, error: appErr } = await supabase
+          .from("apps")
+          .select("app_no, label, url")
+          .in("app_no", appNos);
+
+        if (appErr) throw appErr;
+
+        const appMap = new Map((appRows || []).map((row) => [row.app_no, { label: row.label, url: row.url }]));
+        const shortcuts = appNos
+          .map((no) => appMap.get(no))
+          .filter(Boolean)
+          .slice(0, MAX_SHORTCUTS);
+
+        console.log(`Supabase user_apps for ${target}:`, userRows);
+        console.log(`Resolved shortcuts:`, shortcuts);
+        return { shortcuts, canEdit: false };
+      } catch (err) {
+        console.error("Unexpected error fetching shortcuts", err);
+        return { shortcuts: [], canEdit: false };
+      }
+    };
+
+    const loadAndRenderShortcuts = async (email) => {
+      statusEl.textContent = "リンクを取得しています...";
+      const { shortcuts, canEdit } = await fetchShortcuts(email);
+      if (!shortcuts.length) {
+        console.warn("No shortcuts from sheet; showing fallback links.");
+      }
+      renderSignedIn(email, shortcuts, canEdit);
+    };
+
+    const syncSession = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        statusEl.textContent = "セッションの取得に失敗しました。";
+        actionsEl.innerHTML = "";
+        console.error(error);
+        return;
+      }
+
+      const email = data.session?.user?.email;
+      if (email) {
+        await loadAndRenderShortcuts(email);
+      } else {
+        renderSignedOut();
+      }
+    };
+
+    await syncSession();
+
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      const email = session?.user?.email;
+      if (email) {
+        await loadAndRenderShortcuts(email);
+      } else {
+        renderSignedOut();
+      }
+    });
+  </script>
+</body>
+</html>

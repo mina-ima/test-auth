@@ -1,0 +1,23 @@
+name: Sync Sheets to Supabase
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 15 * * *' # UTC; adjust as needed
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - run: npm install
+      - name: Sync sheets to Supabase
+        run: npm run sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SHEETS_USERS_URL: ${{ secrets.SHEETS_USERS_URL }}
+          SHEETS_APPS_URL: ${{ secrets.SHEETS_APPS_URL }}
