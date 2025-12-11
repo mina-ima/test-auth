@@ -44,5 +44,21 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 const envObject = { SUPABASE_URL, SUPABASE_ANON_KEY };
 const output = `window.__ENV__=${JSON.stringify(envObject)};`;
+
+// Write env.js to project root for local usage
 fs.writeFileSync(path.resolve(__dirname, "env.js"), output, "utf8");
-console.log("env.js generated successfully.");
+
+// Ensure Vercel static output exists at ./public with the assets it needs
+const publicDir = path.resolve(__dirname, "public");
+if (!fs.existsSync(publicDir)) {
+  fs.mkdirSync(publicDir);
+}
+fs.writeFileSync(path.join(publicDir, "env.js"), output, "utf8");
+
+const indexSrc = path.resolve(__dirname, "index.html");
+const indexDest = path.join(publicDir, "index.html");
+if (fs.existsSync(indexSrc)) {
+  fs.copyFileSync(indexSrc, indexDest);
+}
+
+console.log("env.js generated successfully (root and public).");
