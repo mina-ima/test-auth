@@ -153,6 +153,27 @@
       color: #6b7280;
       font-size: 14px;
     }
+
+    .link-row {
+      display: grid;
+      gap: 8px;
+      align-items: start;
+    }
+
+    .qr-box {
+      justify-self: center;
+      padding: 10px;
+      border: 1px dashed #e5e7eb;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .qr-box img {
+      display: block;
+      width: 200px;
+      height: 200px;
+      object-fit: contain;
+    }
   </style>
 </head>
 <body>
@@ -175,6 +196,7 @@
     const normalizeEmail = (val = "") => val.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
 
     import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
+    import QRCode from "https://cdn.jsdelivr.net/npm/qrcode@1.5.3/+esm";
 
     const statusEl = document.getElementById("status");
     const actionsEl = document.getElementById("actions");
@@ -204,6 +226,42 @@
     };
 
     let latestContext = { email: "", shortcuts: [], editableShortcuts: [], canEdit: false };
+
+    const attachQrHandlers = () => {
+      const qrButtons = Array.from(document.querySelectorAll(".btn-qr"));
+      qrButtons.forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const targetId = btn.dataset?.target;
+          const url = btn.dataset?.url || "";
+          const box = targetId ? document.getElementById(targetId) : null;
+          if (!box || !url) return;
+
+          // toggle hide/show
+          if (!box.hasAttribute("hidden")) {
+            box.setAttribute("hidden", "true");
+            box.innerHTML = "";
+            btn.textContent = "QRコード";
+            return;
+          }
+
+          btn.textContent = "生成中...";
+          try {
+            const dataUrl = await QRCode.toDataURL(url, {
+              width: 220,
+              margin: 1,
+              errorCorrectionLevel: "M",
+            });
+            box.innerHTML = `<img src="${dataUrl}" alt="QR: ${url}" />`;
+            box.removeAttribute("hidden");
+            btn.textContent = "閉じる";
+          } catch (err) {
+            console.error("QR generation failed", err);
+            btn.textContent = "エラー";
+            setTimeout(() => { btn.textContent = "QRコード"; }, 1400);
+          }
+        });
+      });
+    };
 
     const renderSignedOut = () => {
       statusEl.textContent = "ログインしていません。";
@@ -243,7 +301,11 @@
       const linksMarkup = linksToRender
         .map(
           (link, idx) => `
-            <a class="btn-primary" id="shortcut-${idx}" href="${link.url}" target="_blank" rel="noopener noreferrer">${link.label}</a>
+            <div class="link-row">
+              <a class="btn-primary" id="shortcut-${idx}" href="${link.url}" target="_blank" rel="noopener noreferrer">${link.label}</a>
+              <button class="btn-ghost btn-qr" data-url="${link.url}" data-target="qr-${idx}">QRコード</button>
+              <div class="qr-box" id="qr-${idx}" hidden></div>
+            </div>
           `
         )
         .join("\n");
@@ -263,6 +325,8 @@
         statusEl.textContent = "ログアウトしています...";
         await supabase.auth.signOut();
       });
+
+      attachQrHandlers();
 
       if (canEdit) {
         const editBtn = document.getElementById("edit-btn");
