@@ -745,7 +745,7 @@
 
         // 2) apps
         let apps = [];
-        if (isAdmin) {
+        if (isAdmin || canEditApps) {
           const { data: appsAll, error: appsErr } = await supabase
             .from("apps")
             .select("app_no, label, url")
