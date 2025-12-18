@@ -73,6 +73,17 @@
       background: #e0e7ff;
     }
 
+    .btn-secondary {
+      width: 100%;
+      background: #dbeafe;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+    }
+
+    .btn-secondary:hover {
+      background: #bfdbfe;
+    }
+
     .status {
       margin-bottom: 18px;
       padding: 12px;
@@ -85,6 +96,62 @@
     #actions {
       display: grid;
       gap: 12px;
+    }
+
+    input[type="text"],
+    input[type="url"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+      font-size: 14px;
+      background: #f8fafc;
+    }
+
+    input[type="text"]:focus,
+    input[type="url"]:focus {
+      outline: 2px solid #bfdbfe;
+      background: #fff;
+    }
+
+    .editor-wrapper {
+      display: grid;
+      gap: 12px;
+      text-align: left;
+    }
+
+    .editor-row {
+      display: grid;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      background: #f9fafb;
+    }
+
+    @media (min-width: 540px) {
+      .editor-row {
+        grid-template-columns: 0.5fr 1fr 1fr;
+        align-items: end;
+      }
+    }
+
+    .editor-field label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 13px;
+      color: #4b5563;
+    }
+
+    .editor-actions {
+      display: grid;
+      gap: 10px;
+    }
+
+    .muted {
+      color: #6b7280;
+      font-size: 14px;
     }
   </style>
 </head>
@@ -125,8 +192,23 @@
       },
     });
 
+    const getWantsEditParam = () => new URL(window.location.href).searchParams.get("edit") === "1";
+    const setEditParam = (enabled) => {
+      const url = new URL(window.location.href);
+      if (enabled) {
+        url.searchParams.set("edit", "1");
+      } else {
+        url.searchParams.delete("edit");
+      }
+      window.history.replaceState({}, "", url);
+    };
+
+    let latestContext = { email: "", shortcuts: [], editableShortcuts: [], canEdit: false };
+
     const renderSignedOut = () => {
       statusEl.textContent = "ログインしていません。";
+      setEditParam(false);
+      latestContext = { email: "", shortcuts: [], editableShortcuts: [], canEdit: false };
       actionsEl.innerHTML = `
         <button class="btn-primary" id="login-btn">Googleでログイン</button>
       `;
@@ -166,8 +248,13 @@
         )
         .join("\n");
 
+      const editButtonMarkup = canEdit
+        ? `<button class="btn-secondary" id="edit-btn">リンクを編集</button>`
+        : "";
+
       actionsEl.innerHTML = `
-        ${linksMarkup}
+        ${linksMarkup || `<p class="muted">表示できるリンクがありません。</p>`}
+        ${editButtonMarkup}
         <button class="btn-ghost" id="logout-btn">ログアウト</button>
       `;
 
@@ -176,6 +263,110 @@
         statusEl.textContent = "ログアウトしています...";
         await supabase.auth.signOut();
       });
+
+      if (canEdit) {
+        const editBtn = document.getElementById("edit-btn");
+        editBtn?.addEventListener("click", () => {
+          setEditParam(true);
+          renderEditor(latestContext);
+        });
+      }
+    };
+
+    const renderEditor = (ctx) => {
+      if (!ctx?.canEdit) {
+        setEditParam(false);
+        renderSignedIn(ctx?.email || "", ctx?.shortcuts || [], false);
+        return;
+      }
+
+      statusEl.textContent = `${ctx.email} さんはリンクを編集できます。`;
+
+      const rows = (ctx.editableShortcuts || [])
+        .map(
+          (item, idx) => `
+            <div class="editor-row">
+              <div class="editor-field">
+                <label for="app-${idx}">App No</label>
+                <input id="app-${idx}" name="app-${idx}" type="text" value="${item.app_no}" readonly />
+              </div>
+              <div class="editor-field">
+                <label for="label-${idx}">ラベル</label>
+                <input id="label-${idx}" name="label-${idx}" type="text" value="${item.label || ""}" placeholder="例: 社内ポータル" />
+              </div>
+              <div class="editor-field">
+                <label for="url-${idx}">URL</label>
+                <input id="url-${idx}" name="url-${idx}" type="url" value="${item.url || ""}" placeholder="https://..." />
+              </div>
+            </div>
+          `
+        )
+        .join("\n");
+
+      actionsEl.innerHTML = `
+        <div class="editor-wrapper">
+          <p class="muted">表示されているApp Noに対応するラベルとURLを更新できます。</p>
+          ${
+            rows
+              ? `
+              <form id="editor-form">
+                ${rows}
+                <div class="editor-actions">
+                  <button class="btn-primary" type="submit" id="save-btn">保存する</button>
+                </div>
+              </form>
+            `
+              : `<p class="muted">編集できるリンクがありません。</p>`
+          }
+          <div class="editor-actions">
+            <button class="btn-ghost" type="button" id="back-btn">一覧に戻る</button>
+            <button class="btn-ghost" id="logout-btn">ログアウト</button>
+          </div>
+        </div>
+      `;
+
+      const logoutBtn = document.getElementById("logout-btn");
+      logoutBtn?.addEventListener("click", async () => {
+        statusEl.textContent = "ログアウトしています...";
+        await supabase.auth.signOut();
+      });
+
+      const backBtn = document.getElementById("back-btn");
+      backBtn?.addEventListener("click", () => {
+        setEditParam(false);
+        renderSignedIn(ctx.email, ctx.shortcuts, ctx.canEdit);
+      });
+
+      const form = document.getElementById("editor-form");
+      form?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const updates = (ctx.editableShortcuts || [])
+          .map((item, idx) => ({
+            app_no: item.app_no,
+            label: (formData.get(`label-${idx}`) || "").toString().trim(),
+            url: (formData.get(`url-${idx}`) || "").toString().trim(),
+          }))
+          .filter((row) => row.app_no && row.label && row.url);
+
+        if (!updates.length) {
+          statusEl.textContent = "保存できる項目がありません。";
+          return;
+        }
+
+        statusEl.textContent = "保存しています...";
+        const { error } = await supabase.from("apps").upsert(updates, { onConflict: "app_no" });
+        if (error) {
+          statusEl.textContent = "保存に失敗しました。";
+          console.error("Failed to save apps", error);
+          return;
+        }
+
+        statusEl.textContent = "保存しました。";
+        await loadAndRenderShortcuts(ctx.email, { preferEditMode: true });
+      });
+
+      setEditParam(true);
     };
 
     const fetchShortcuts = async (email) => {
@@ -184,7 +375,7 @@
         // Supabase: user_apps -> apps
         const { data: userRows, error: userErr } = await supabase
           .from("user_apps")
-          .select("app_no")
+          .select("app_no, editor")
           .eq("email", target)
           .eq("allowed", true)
           .limit(MAX_SHORTCUTS);
@@ -197,7 +388,7 @@
           .slice(0, MAX_SHORTCUTS);
 
         if (!appNos.length) {
-          return { shortcuts: [], canEdit: false };
+          return { shortcuts: [], editableShortcuts: [], canEdit: false };
         }
 
         const { data: appRows, error: appErr } = await supabase
@@ -208,25 +399,43 @@
         if (appErr) throw appErr;
 
         const appMap = new Map((appRows || []).map((row) => [row.app_no, { label: row.label, url: row.url }]));
-        const shortcuts = appNos
-          .map((no) => appMap.get(no))
-          .filter(Boolean)
+        const editableShortcuts = appNos
+          .map((no) => {
+            const app = appMap.get(no) || {};
+            return { app_no: no, label: app.label || "", url: app.url || "" };
+          })
           .slice(0, MAX_SHORTCUTS);
+
+        const shortcuts = editableShortcuts.filter((item) => item.label && item.url);
+        const canEdit = (userRows || []).some((row) => row?.editor === true) || Boolean((userRows || []).length);
 
         console.log(`Supabase user_apps for ${target}:`, userRows);
         console.log(`Resolved shortcuts:`, shortcuts);
-        return { shortcuts, canEdit: false };
+        return { shortcuts, editableShortcuts, canEdit };
       } catch (err) {
         console.error("Unexpected error fetching shortcuts", err);
-        return { shortcuts: [], canEdit: false };
+        return { shortcuts: [], editableShortcuts: [], canEdit: false };
       }
     };
 
-    const loadAndRenderShortcuts = async (email) => {
+    const loadAndRenderShortcuts = async (email, options = {}) => {
       statusEl.textContent = "リンクを取得しています...";
-      const { shortcuts, canEdit } = await fetchShortcuts(email);
+      const { shortcuts, editableShortcuts, canEdit } = await fetchShortcuts(email);
+
+      latestContext = { email, shortcuts, editableShortcuts, canEdit };
+
       if (!shortcuts.length) {
         console.warn("No shortcuts from sheet; showing fallback links.");
+      }
+
+      const wantsEdit = (options.preferEditMode && canEdit) || (canEdit && getWantsEditParam());
+      if (wantsEdit) {
+        renderEditor(latestContext);
+        return;
+      }
+
+      if (!canEdit) {
+        setEditParam(false);
       }
       renderSignedIn(email, shortcuts, canEdit);
     };
