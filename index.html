@@ -20,7 +20,7 @@
     }
 
     .card {
-      width: min(420px, 92vw);
+      width: min(1100px, 96vw);
       background: #fff;
       padding: 32px 28px;
       border-radius: 16px;
@@ -121,32 +121,14 @@
       text-align: left;
     }
 
-    .editor-row {
-      display: grid;
-      gap: 8px;
-      padding: 10px 12px;
-      border: 1px solid #e5e7eb;
-      border-radius: 12px;
-      background: #f9fafb;
-    }
-
-    @media (min-width: 540px) {
-      .editor-row {
-        grid-template-columns: 0.5fr 1fr 1fr;
-        align-items: end;
-      }
-    }
-
-    .editor-field label {
-      display: block;
-      margin-bottom: 4px;
-      font-size: 13px;
-      color: #4b5563;
-    }
-
     .editor-actions {
       display: grid;
       gap: 10px;
+    }
+
+    .editor-actions.inline-grid {
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      align-items: center;
     }
 
     .muted {
@@ -174,6 +156,64 @@
       height: 200px;
       object-fit: contain;
     }
+
+    .table-wrapper {
+      width: 100%;
+      overflow: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    .table-grid {
+      width: 100%;
+      min-width: 720px;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .table-grid th,
+    .table-grid td {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 10px 12px;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    .table-grid th {
+      background: #f8fafc;
+      color: #4b5563;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .table-grid td.cell-num {
+      width: 44px;
+      text-align: center;
+      color: #6b7280;
+      font-weight: 600;
+    }
+
+    .table-grid td.cell-edit {
+      background: #fffdfa;
+      min-width: 160px;
+    }
+
+    .table-grid td.cell-edit:focus {
+      outline: 2px solid #bfdbfe;
+      border-radius: 6px;
+    }
+
+    .table-grid .cell-check {
+      text-align: center;
+      width: 90px;
+    }
+
+    .table-grid input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+    }
   </style>
 </head>
 <body>
@@ -194,6 +234,19 @@
     const MAX_SHORTCUTS = 10;
 
     const normalizeEmail = (val = "") => val.replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
+    const escapeHtml = (val = "") =>
+      String(val)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    const boolFromText = (val, defaultValue = false) => {
+      if (val === undefined || val === null) return defaultValue;
+      const normalized = String(val).trim().toLowerCase();
+      if (!normalized) return defaultValue;
+      return ["true", "1", "yes", "y", "on", "ok", "✓", "○"].includes(normalized);
+    };
 
     import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
     import QRCode from "https://cdn.jsdelivr.net/npm/qrcode@1.5.3/+esm";
@@ -213,6 +266,57 @@
         autoRefreshToken: false,
       },
     });
+
+    const setupGridPaste = (tbody, columns = [], appendRow) => {
+      if (!tbody || !columns.length || typeof appendRow !== "function") return;
+      tbody.addEventListener("paste", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const field = target.dataset?.field;
+        if (!columns.some((c) => c.key === field)) return;
+
+        const text = (event.clipboardData || window.clipboardData)?.getData("text") || "";
+        if (!text) return;
+        event.preventDefault();
+
+        const rows = text
+          .split(/\r?\n/)
+          .map((line) => line.split("\t"))
+          .filter((cols) => cols.some((c) => c.trim() !== ""));
+        if (!rows.length) return;
+
+        const allRows = Array.from(tbody.querySelectorAll("tr"));
+        const startRow = Math.max(0, allRows.indexOf(target.closest("tr")));
+        const ensureRow = (idx) => {
+          while (tbody.querySelectorAll("tr").length <= idx) {
+            appendRow();
+          }
+        };
+
+        rows.forEach((cols, rowOffset) => {
+          const targetIndex = startRow + rowOffset;
+          ensureRow(targetIndex);
+          const rowEl = tbody.querySelectorAll("tr")[targetIndex];
+          columns.forEach((colDef, colIndex) => {
+            const rawVal = cols[colIndex];
+            if (rawVal === undefined) {
+              if (colDef.type === "bool" && colDef.defaultTrue) {
+                const checkbox = rowEl.querySelector(`input[data-field="${colDef.key}"]`);
+                if (checkbox) checkbox.checked = true;
+              }
+              return;
+            }
+            if (colDef.type === "bool") {
+              const checkbox = rowEl.querySelector(`input[data-field="${colDef.key}"]`);
+              if (checkbox) checkbox.checked = boolFromText(rawVal, !!colDef.defaultTrue);
+            } else {
+              const cell = rowEl.querySelector(`[data-field="${colDef.key}"]`);
+              if (cell) cell.textContent = rawVal.trim();
+            }
+          });
+        });
+      });
+    };
 
     const getEditMode = () => new URL(window.location.href).searchParams.get("edit") || "";
     const setEditMode = (mode = "") => {
@@ -362,33 +466,43 @@
       statusEl.textContent = `${ctx.email} さんはアプリを追加・編集できます。`;
 
       const renderAppRow = (item, idx) => `
-        <div class="editor-row app-row" data-index="${idx}">
-          <div class="editor-field">
-            <label for="app-${idx}">App No</label>
-            <input id="app-${idx}" name="app-${idx}" type="text" value="${item.app_no || ""}" placeholder="例: app-001" />
-          </div>
-          <div class="editor-field">
-            <label for="label-${idx}">ラベル</label>
-            <input id="label-${idx}" name="label-${idx}" type="text" value="${item.label || ""}" placeholder="例: 社内ポータル" />
-          </div>
-          <div class="editor-field">
-            <label for="url-${idx}">URL</label>
-            <input id="url-${idx}" name="url-${idx}" type="url" value="${item.url || ""}" placeholder="https://..." />
-          </div>
-        </div>
+        <tr data-index="${idx}">
+          <td class="cell-num">${idx + 1}</td>
+          <td class="cell-edit" contenteditable="true" data-field="app_no" spellcheck="false">${escapeHtml(item.app_no || "")}</td>
+          <td class="cell-edit" contenteditable="true" data-field="label">${escapeHtml(item.label || "")}</td>
+          <td class="cell-edit" contenteditable="true" data-field="url" spellcheck="false">${escapeHtml(item.url || "")}</td>
+        </tr>
       `;
 
-      const existingRowsMarkup = (appsToRender || []).map(renderAppRow).join("\n");
-      const blankRowMarkup = renderAppRow({ app_no: "", label: "", url: "" }, (appsToRender || []).length);
+      const blankRowCount = Math.max(3, 5 - appsToRender.length);
+      const existingRowsMarkup = appsToRender.map((item, idx) => renderAppRow(item, idx)).join("\n");
+      const blankRowsMarkup = Array.from({ length: blankRowCount })
+        .map((_, i) => renderAppRow({ app_no: "", label: "", url: "" }, appsToRender.length + i))
+        .join("\n");
 
       actionsEl.innerHTML = `
         <div class="editor-wrapper">
-          <p class="muted">App No, ラベル, URL を入力して保存すると apps テーブルに登録/更新されます。</p>
+          <p class="muted">スプレッドシートと同じ感覚で入力・貼り付けできます。列は「App No / ラベル / URL」の順です。</p>
           <form id="apps-form">
-            ${existingRowsMarkup}
-            ${blankRowMarkup}
-            <div class="editor-actions">
-              <button class="btn-secondary" type="button" id="add-app-row">行を追加</button>
+            <div class="table-wrapper">
+              <table class="table-grid" id="apps-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>App No</th>
+                    <th>ラベル</th>
+                    <th>URL</th>
+                  </tr>
+                </thead>
+                <tbody id="apps-tbody">
+                  ${existingRowsMarkup}
+                  ${blankRowsMarkup}
+                </tbody>
+              </table>
+            </div>
+            <div class="editor-actions inline-grid">
+              <button class="btn-secondary" type="button" id="add-app-row">空行を1行追加</button>
+              <button class="btn-secondary" type="button" id="add-five-app-rows">空行を5行追加</button>
               <button class="btn-primary" type="submit" id="save-btn">保存する</button>
             </div>
           </form>
@@ -399,14 +513,28 @@
         </div>
       `;
 
-      const addAppRow = () => {
-        const form = document.getElementById("apps-form");
-        if (!form) return;
-        const currentCount = form.querySelectorAll(".app-row").length;
-        const wrapper = document.createElement("div");
-        wrapper.innerHTML = renderAppRow({ app_no: "", label: "", url: "" }, currentCount);
-        form.insertBefore(wrapper.firstElementChild, form.querySelector(".editor-actions"));
+      const tbody = document.getElementById("apps-tbody");
+      const addAppRow = (count = 1) => {
+        if (!tbody) return;
+        const start = tbody.querySelectorAll("tr").length;
+        const rowsMarkup = Array.from({ length: count })
+          .map((_, i) => renderAppRow({ app_no: "", label: "", url: "" }, start + i))
+          .join("\n");
+        tbody.insertAdjacentHTML("beforeend", rowsMarkup);
       };
+
+      setupGridPaste(
+        tbody,
+        [
+          { key: "app_no", type: "text" },
+          { key: "label", type: "text" },
+          { key: "url", type: "text" },
+        ],
+        () => addAppRow(1)
+      );
+
+      document.getElementById("add-app-row")?.addEventListener("click", () => addAppRow(1));
+      document.getElementById("add-five-app-rows")?.addEventListener("click", () => addAppRow(5));
 
       const logoutBtn = document.getElementById("logout-btn");
       logoutBtn?.addEventListener("click", async () => {
@@ -420,20 +548,22 @@
         renderSignedIn({ ...ctx, canEditApps: ctx.canEditApps, canEditUsers: ctx.canEditUsers });
       });
 
-      document.getElementById("add-app-row")?.addEventListener("click", addAppRow);
-
       const form = document.getElementById("apps-form");
       form?.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const rows = Array.from(form.querySelectorAll(".app-row"));
-        const updates = rows
-          .map((row, idx) => {
-            const appNo = (row.querySelector(`#app-${idx}`)?.value || "").trim();
-            const label = (row.querySelector(`#label-${idx}`)?.value || "").trim();
-            const url = (row.querySelector(`#url-${idx}`)?.value || "").trim();
-            return { app_no: appNo, label, url };
-          })
-          .filter((row) => row.app_no && row.label && row.url);
+        const rows = Array.from(tbody?.querySelectorAll("tr") || []);
+        const seen = new Set();
+        const updates = [];
+
+        rows.forEach((row) => {
+          const appNo = (row.querySelector('[data-field="app_no"]')?.textContent || "").trim();
+          const label = (row.querySelector('[data-field="label"]')?.textContent || "").trim();
+          const url = (row.querySelector('[data-field="url"]')?.textContent || "").trim();
+          if (!appNo || !label || !url) return;
+          if (seen.has(appNo)) return;
+          seen.add(appNo);
+          updates.push({ app_no: appNo, label, url });
+        });
 
         if (!updates.length) {
           statusEl.textContent = "保存できる項目がありません。";
@@ -466,37 +596,47 @@
       const userAppsRows = ctx.userApps || [];
 
       const renderUserRow = (item, idx) => `
-        <div class="editor-row user-row" data-index="${idx}">
-          <div class="editor-field">
-            <label for="email-${idx}">メール</label>
-            <input id="email-${idx}" name="email-${idx}" type="text" value="${item.email || ""}" placeholder="user@example.com" />
-          </div>
-          <div class="editor-field">
-            <label for="uapp-${idx}">App No</label>
-            <input id="uapp-${idx}" name="uapp-${idx}" type="text" value="${item.app_no || ""}" placeholder="例: app-001" />
-          </div>
-          <div class="editor-field">
-            <label>権限</label>
-            <div style="display:flex; gap:8px; flex-wrap: wrap;">
-              <label><input type="checkbox" id="allow-${idx}" name="allow-${idx}" ${item.allowed ? "checked" : ""}/> allowed</label>
-              <label><input type="checkbox" id="editor-${idx}" name="editor-${idx}" ${item.editor ? "checked" : ""}/> editor</label>
-              <label><input type="checkbox" id="admin-${idx}" name="admin-${idx}" ${item.admin ? "checked" : ""}/> admin</label>
-            </div>
-          </div>
-        </div>
+        <tr data-index="${idx}">
+          <td class="cell-num">${idx + 1}</td>
+          <td class="cell-edit" contenteditable="true" data-field="email" spellcheck="false">${escapeHtml(item.email || "")}</td>
+          <td class="cell-edit" contenteditable="true" data-field="app_no" spellcheck="false">${escapeHtml(item.app_no || "")}</td>
+          <td class="cell-check"><input type="checkbox" data-field="allowed" ${item.allowed ? "checked" : ""} data-default="true" /></td>
+          <td class="cell-check"><input type="checkbox" data-field="editor" ${item.editor ? "checked" : ""} /></td>
+          <td class="cell-check"><input type="checkbox" data-field="admin" ${item.admin ? "checked" : ""} /></td>
+        </tr>
       `;
 
+      const blankUserRowCount = Math.max(3, 5 - userAppsRows.length);
       const existingUserRowsMarkup = userAppsRows.map(renderUserRow).join("\n");
-      const blankUserRow = renderUserRow({ email: "", app_no: "", allowed: true, editor: false, admin: false }, userAppsRows.length);
+      const blankUserRowsMarkup = Array.from({ length: blankUserRowCount })
+        .map((_, i) => renderUserRow({ email: "", app_no: "", allowed: true, editor: false, admin: false }, userAppsRows.length + i))
+        .join("\n");
 
       actionsEl.innerHTML = `
         <div class="editor-wrapper">
-          <p class="muted">メールとApp Noを指定してユーザーのリンク表示権限を設定できます。</p>
+          <p class="muted">メールとApp Noを入れれば、allowedは自動でONにして保存します。Excel/スプレッドシートの行（メール / App No / allowed / editor / admin）をそのまま貼り付けできます。</p>
           <form id="users-form">
-            ${existingUserRowsMarkup}
-            ${blankUserRow}
-            <div class="editor-actions">
-              <button class="btn-secondary" type="button" id="add-user-row">行を追加</button>
+            <div class="table-wrapper">
+              <table class="table-grid" id="users-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>メール</th>
+                    <th>App No</th>
+                    <th>allowed</th>
+                    <th>editor</th>
+                    <th>admin</th>
+                  </tr>
+                </thead>
+                <tbody id="users-tbody">
+                  ${existingUserRowsMarkup}
+                  ${blankUserRowsMarkup}
+                </tbody>
+              </table>
+            </div>
+            <div class="editor-actions inline-grid">
+              <button class="btn-secondary" type="button" id="add-user-row">空行を1行追加</button>
+              <button class="btn-secondary" type="button" id="add-five-user-rows">空行を5行追加</button>
               <button class="btn-primary" type="submit" id="save-users-btn">保存する</button>
             </div>
           </form>
@@ -507,16 +647,30 @@
         </div>
       `;
 
-      const addUserRow = () => {
-        const form = document.getElementById("users-form");
-        if (!form) return;
-        const currentCount = form.querySelectorAll(".user-row").length;
-        const wrapper = document.createElement("div");
-        wrapper.innerHTML = renderUserRow({ email: "", app_no: "", allowed: true, editor: false, admin: false }, currentCount);
-        form.insertBefore(wrapper.firstElementChild, form.querySelector(".editor-actions"));
+      const tbody = document.getElementById("users-tbody");
+      const addUserRow = (count = 1) => {
+        if (!tbody) return;
+        const start = tbody.querySelectorAll("tr").length;
+        const rowsMarkup = Array.from({ length: count })
+          .map((_, i) => renderUserRow({ email: "", app_no: "", allowed: true, editor: false, admin: false }, start + i))
+          .join("\n");
+        tbody.insertAdjacentHTML("beforeend", rowsMarkup);
       };
 
-      document.getElementById("add-user-row")?.addEventListener("click", addUserRow);
+      setupGridPaste(
+        tbody,
+        [
+          { key: "email", type: "text" },
+          { key: "app_no", type: "text" },
+          { key: "allowed", type: "bool", defaultTrue: true },
+          { key: "editor", type: "bool" },
+          { key: "admin", type: "bool" },
+        ],
+        () => addUserRow(1)
+      );
+
+      document.getElementById("add-user-row")?.addEventListener("click", () => addUserRow(1));
+      document.getElementById("add-five-user-rows")?.addEventListener("click", () => addUserRow(5));
 
       const logoutBtn = document.getElementById("logout-btn");
       logoutBtn?.addEventListener("click", async () => {
@@ -533,17 +687,22 @@
       const form = document.getElementById("users-form");
       form?.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const rows = Array.from(form.querySelectorAll(".user-row"));
-        const updates = rows
-          .map((row, idx) => {
-            const emailVal = normalizeEmail(row.querySelector(`#email-${idx}`)?.value || "");
-            const appNo = (row.querySelector(`#uapp-${idx}`)?.value || "").trim();
-            const allowed = row.querySelector(`#allow-${idx}`)?.checked || false;
-            const editor = row.querySelector(`#editor-${idx}`)?.checked || false;
-            const admin = row.querySelector(`#admin-${idx}`)?.checked || false;
-            return { email: emailVal, app_no: appNo, allowed, editor, admin };
-          })
-          .filter((row) => row.email && row.app_no);
+        const rows = Array.from(tbody?.querySelectorAll("tr") || []);
+        const seen = new Set();
+        const updates = [];
+
+        rows.forEach((row) => {
+          const emailVal = normalizeEmail((row.querySelector('[data-field="email"]')?.textContent || ""));
+          const appNo = (row.querySelector('[data-field="app_no"]')?.textContent || "").trim();
+          const allowed = row.querySelector('input[data-field="allowed"]')?.checked ?? false;
+          const editor = row.querySelector('input[data-field="editor"]')?.checked ?? false;
+          const admin = row.querySelector('input[data-field="admin"]')?.checked ?? false;
+          if (!emailVal || !appNo) return;
+          const key = `${emailVal}__${appNo}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          updates.push({ email: emailVal, app_no: appNo, allowed, editor, admin });
+        });
 
         if (!updates.length) {
           statusEl.textContent = "保存できる項目がありません。";
