@@ -214,18 +214,18 @@
       },
     });
 
-    const getWantsEditParam = () => new URL(window.location.href).searchParams.get("edit") === "1";
-    const setEditParam = (enabled) => {
+    const getEditMode = () => new URL(window.location.href).searchParams.get("edit") || "";
+    const setEditMode = (mode = "") => {
       const url = new URL(window.location.href);
-      if (enabled) {
-        url.searchParams.set("edit", "1");
+      if (mode) {
+        url.searchParams.set("edit", mode);
       } else {
         url.searchParams.delete("edit");
       }
       window.history.replaceState({}, "", url);
     };
 
-    let latestContext = { email: "", shortcuts: [], editableShortcuts: [], canEdit: false };
+    let latestContext = { email: "", shortcuts: [], apps: [], userApps: [], canEditApps: false, canEditUsers: false, isAdmin: false };
 
     const attachQrHandlers = () => {
       const qrButtons = Array.from(document.querySelectorAll(".btn-qr"));
@@ -265,8 +265,8 @@
 
     const renderSignedOut = () => {
       statusEl.textContent = "ログインしていません。";
-      setEditParam(false);
-      latestContext = { email: "", shortcuts: [], editableShortcuts: [], canEdit: false };
+      setEditMode("");
+      latestContext = { email: "", shortcuts: [], apps: [], userApps: [], canEditApps: false, canEditUsers: false, isAdmin: false };
       actionsEl.innerHTML = `
         <button class="btn-primary" id="login-btn">Googleでログイン</button>
       `;
@@ -284,7 +284,8 @@
       });
     };
 
-    const renderSignedIn = (email, shortcuts = [], canEdit = false) => {
+    const renderSignedIn = (ctx = {}) => {
+      const { email = "", shortcuts = [], canEditApps = false, canEditUsers = false } = ctx;
       statusEl.textContent = `ようこそ、${email} さん`;
 
       // If no shortcuts, fall back to the previous hardcoded links.
@@ -310,13 +311,18 @@
         )
         .join("\n");
 
-      const editButtonMarkup = canEdit
-        ? `<button class="btn-secondary" id="edit-btn">リンクを編集</button>`
+      const editButtonMarkup = canEditApps
+        ? `<button class="btn-secondary" id="edit-btn">アプリを追加/編集</button>`
+        : "";
+
+      const userButtonMarkup = canEditUsers
+        ? `<button class="btn-secondary" id="user-btn">ユーザー割当を編集</button>`
         : "";
 
       actionsEl.innerHTML = `
         ${linksMarkup || `<p class="muted">表示できるリンクがありません。</p>`}
         ${editButtonMarkup}
+        ${userButtonMarkup}
         <button class="btn-ghost" id="logout-btn">ログアウト</button>
       `;
 
@@ -328,66 +334,79 @@
 
       attachQrHandlers();
 
-      if (canEdit) {
+      if (canEditApps) {
         const editBtn = document.getElementById("edit-btn");
         editBtn?.addEventListener("click", () => {
-          setEditParam(true);
-          renderEditor(latestContext);
+          setEditMode("apps");
+          renderAppManager(latestContext);
+        });
+      }
+
+      if (canEditUsers) {
+        const userBtn = document.getElementById("user-btn");
+        userBtn?.addEventListener("click", () => {
+          setEditMode("users");
+          renderUserManager(latestContext);
         });
       }
     };
 
-    const renderEditor = (ctx) => {
-      if (!ctx?.canEdit) {
-        setEditParam(false);
-        renderSignedIn(ctx?.email || "", ctx?.shortcuts || [], false);
+    const renderAppManager = (ctx) => {
+      if (!ctx?.canEditApps) {
+        setEditMode("");
+        renderSignedIn({ email: ctx?.email || "", shortcuts: ctx?.shortcuts || [], canEditApps: false, canEditUsers: false });
         return;
       }
 
-      statusEl.textContent = `${ctx.email} さんはリンクを編集できます。`;
+      const appsToRender = ctx.apps && ctx.apps.length ? ctx.apps : [];
+      statusEl.textContent = `${ctx.email} さんはアプリを追加・編集できます。`;
 
-      const rows = (ctx.editableShortcuts || [])
-        .map(
-          (item, idx) => `
-            <div class="editor-row">
-              <div class="editor-field">
-                <label for="app-${idx}">App No</label>
-                <input id="app-${idx}" name="app-${idx}" type="text" value="${item.app_no}" readonly />
-              </div>
-              <div class="editor-field">
-                <label for="label-${idx}">ラベル</label>
-                <input id="label-${idx}" name="label-${idx}" type="text" value="${item.label || ""}" placeholder="例: 社内ポータル" />
-              </div>
-              <div class="editor-field">
-                <label for="url-${idx}">URL</label>
-                <input id="url-${idx}" name="url-${idx}" type="url" value="${item.url || ""}" placeholder="https://..." />
-              </div>
-            </div>
-          `
-        )
-        .join("\n");
+      const renderAppRow = (item, idx) => `
+        <div class="editor-row app-row" data-index="${idx}">
+          <div class="editor-field">
+            <label for="app-${idx}">App No</label>
+            <input id="app-${idx}" name="app-${idx}" type="text" value="${item.app_no || ""}" placeholder="例: app-001" />
+          </div>
+          <div class="editor-field">
+            <label for="label-${idx}">ラベル</label>
+            <input id="label-${idx}" name="label-${idx}" type="text" value="${item.label || ""}" placeholder="例: 社内ポータル" />
+          </div>
+          <div class="editor-field">
+            <label for="url-${idx}">URL</label>
+            <input id="url-${idx}" name="url-${idx}" type="url" value="${item.url || ""}" placeholder="https://..." />
+          </div>
+        </div>
+      `;
+
+      const existingRowsMarkup = (appsToRender || []).map(renderAppRow).join("\n");
+      const blankRowMarkup = renderAppRow({ app_no: "", label: "", url: "" }, (appsToRender || []).length);
 
       actionsEl.innerHTML = `
         <div class="editor-wrapper">
-          <p class="muted">表示されているApp Noに対応するラベルとURLを更新できます。</p>
-          ${
-            rows
-              ? `
-              <form id="editor-form">
-                ${rows}
-                <div class="editor-actions">
-                  <button class="btn-primary" type="submit" id="save-btn">保存する</button>
-                </div>
-              </form>
-            `
-              : `<p class="muted">編集できるリンクがありません。</p>`
-          }
+          <p class="muted">App No, ラベル, URL を入力して保存すると apps テーブルに登録/更新されます。</p>
+          <form id="apps-form">
+            ${existingRowsMarkup}
+            ${blankRowMarkup}
+            <div class="editor-actions">
+              <button class="btn-secondary" type="button" id="add-app-row">行を追加</button>
+              <button class="btn-primary" type="submit" id="save-btn">保存する</button>
+            </div>
+          </form>
           <div class="editor-actions">
             <button class="btn-ghost" type="button" id="back-btn">一覧に戻る</button>
             <button class="btn-ghost" id="logout-btn">ログアウト</button>
           </div>
         </div>
       `;
+
+      const addAppRow = () => {
+        const form = document.getElementById("apps-form");
+        if (!form) return;
+        const currentCount = form.querySelectorAll(".app-row").length;
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = renderAppRow({ app_no: "", label: "", url: "" }, currentCount);
+        form.insertBefore(wrapper.firstElementChild, form.querySelector(".editor-actions"));
+      };
 
       const logoutBtn = document.getElementById("logout-btn");
       logoutBtn?.addEventListener("click", async () => {
@@ -397,20 +416,23 @@
 
       const backBtn = document.getElementById("back-btn");
       backBtn?.addEventListener("click", () => {
-        setEditParam(false);
-        renderSignedIn(ctx.email, ctx.shortcuts, ctx.canEdit);
+        setEditMode("");
+        renderSignedIn({ ...ctx, canEditApps: ctx.canEditApps, canEditUsers: ctx.canEditUsers });
       });
 
-      const form = document.getElementById("editor-form");
+      document.getElementById("add-app-row")?.addEventListener("click", addAppRow);
+
+      const form = document.getElementById("apps-form");
       form?.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const formData = new FormData(form);
-        const updates = (ctx.editableShortcuts || [])
-          .map((item, idx) => ({
-            app_no: item.app_no,
-            label: (formData.get(`label-${idx}`) || "").toString().trim(),
-            url: (formData.get(`url-${idx}`) || "").toString().trim(),
-          }))
+        const rows = Array.from(form.querySelectorAll(".app-row"));
+        const updates = rows
+          .map((row, idx) => {
+            const appNo = (row.querySelector(`#app-${idx}`)?.value || "").trim();
+            const label = (row.querySelector(`#label-${idx}`)?.value || "").trim();
+            const url = (row.querySelector(`#url-${idx}`)?.value || "").trim();
+            return { app_no: appNo, label, url };
+          })
           .filter((row) => row.app_no && row.label && row.url);
 
         if (!updates.length) {
@@ -427,81 +449,214 @@
         }
 
         statusEl.textContent = "保存しました。";
-        await loadAndRenderShortcuts(ctx.email, { preferEditMode: true });
+        await loadAndRenderShortcuts(ctx.email, { preferEditMode: "apps" });
       });
 
-      setEditParam(true);
+      setEditMode("apps");
     };
 
-    const fetchShortcuts = async (email) => {
+    const renderUserManager = (ctx) => {
+      if (!ctx?.canEditUsers) {
+        setEditMode("");
+        renderSignedIn({ email: ctx?.email || "", shortcuts: ctx?.shortcuts || [], canEditApps: ctx?.canEditApps || false, canEditUsers: false });
+        return;
+      }
+
+      statusEl.textContent = `${ctx.email} さんはユーザー割当を編集できます。`;
+      const userAppsRows = ctx.userApps || [];
+
+      const renderUserRow = (item, idx) => `
+        <div class="editor-row user-row" data-index="${idx}">
+          <div class="editor-field">
+            <label for="email-${idx}">メール</label>
+            <input id="email-${idx}" name="email-${idx}" type="text" value="${item.email || ""}" placeholder="user@example.com" />
+          </div>
+          <div class="editor-field">
+            <label for="uapp-${idx}">App No</label>
+            <input id="uapp-${idx}" name="uapp-${idx}" type="text" value="${item.app_no || ""}" placeholder="例: app-001" />
+          </div>
+          <div class="editor-field">
+            <label>権限</label>
+            <div style="display:flex; gap:8px; flex-wrap: wrap;">
+              <label><input type="checkbox" id="allow-${idx}" name="allow-${idx}" ${item.allowed ? "checked" : ""}/> allowed</label>
+              <label><input type="checkbox" id="editor-${idx}" name="editor-${idx}" ${item.editor ? "checked" : ""}/> editor</label>
+              <label><input type="checkbox" id="admin-${idx}" name="admin-${idx}" ${item.admin ? "checked" : ""}/> admin</label>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const existingUserRowsMarkup = userAppsRows.map(renderUserRow).join("\n");
+      const blankUserRow = renderUserRow({ email: "", app_no: "", allowed: true, editor: false, admin: false }, userAppsRows.length);
+
+      actionsEl.innerHTML = `
+        <div class="editor-wrapper">
+          <p class="muted">メールとApp Noを指定してユーザーのリンク表示権限を設定できます。</p>
+          <form id="users-form">
+            ${existingUserRowsMarkup}
+            ${blankUserRow}
+            <div class="editor-actions">
+              <button class="btn-secondary" type="button" id="add-user-row">行を追加</button>
+              <button class="btn-primary" type="submit" id="save-users-btn">保存する</button>
+            </div>
+          </form>
+          <div class="editor-actions">
+            <button class="btn-ghost" type="button" id="back-from-users">一覧に戻る</button>
+            <button class="btn-ghost" id="logout-btn">ログアウト</button>
+          </div>
+        </div>
+      `;
+
+      const addUserRow = () => {
+        const form = document.getElementById("users-form");
+        if (!form) return;
+        const currentCount = form.querySelectorAll(".user-row").length;
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = renderUserRow({ email: "", app_no: "", allowed: true, editor: false, admin: false }, currentCount);
+        form.insertBefore(wrapper.firstElementChild, form.querySelector(".editor-actions"));
+      };
+
+      document.getElementById("add-user-row")?.addEventListener("click", addUserRow);
+
+      const logoutBtn = document.getElementById("logout-btn");
+      logoutBtn?.addEventListener("click", async () => {
+        statusEl.textContent = "ログアウトしています...";
+        await supabase.auth.signOut();
+      });
+
+      const backBtn = document.getElementById("back-from-users");
+      backBtn?.addEventListener("click", () => {
+        setEditMode("");
+        renderSignedIn({ ...ctx });
+      });
+
+      const form = document.getElementById("users-form");
+      form?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const rows = Array.from(form.querySelectorAll(".user-row"));
+        const updates = rows
+          .map((row, idx) => {
+            const emailVal = normalizeEmail(row.querySelector(`#email-${idx}`)?.value || "");
+            const appNo = (row.querySelector(`#uapp-${idx}`)?.value || "").trim();
+            const allowed = row.querySelector(`#allow-${idx}`)?.checked || false;
+            const editor = row.querySelector(`#editor-${idx}`)?.checked || false;
+            const admin = row.querySelector(`#admin-${idx}`)?.checked || false;
+            return { email: emailVal, app_no: appNo, allowed, editor, admin };
+          })
+          .filter((row) => row.email && row.app_no);
+
+        if (!updates.length) {
+          statusEl.textContent = "保存できる項目がありません。";
+          return;
+        }
+
+        statusEl.textContent = "保存しています...";
+        const { error } = await supabase.from("user_apps").upsert(updates, { onConflict: "email,app_no" });
+        if (error) {
+          statusEl.textContent = "保存に失敗しました。";
+          console.error("Failed to save user_apps", error);
+          return;
+        }
+
+        statusEl.textContent = "保存しました。";
+        await loadAndRenderShortcuts(ctx.email, { preferEditMode: "users" });
+      });
+
+      setEditMode("users");
+    };
+
+    const fetchAppData = async (email) => {
       const target = normalizeEmail(email || "");
       try {
-        // Supabase: user_apps -> apps
+        // 1) user_apps to know allowed/admin/editor flags
         const { data: userRows, error: userErr } = await supabase
           .from("user_apps")
-          .select("app_no, editor")
+          .select("app_no, allowed, editor, admin")
           .eq("email", target)
-          .eq("allowed", true)
-          .limit(MAX_SHORTCUTS);
+          .limit(300);
 
         if (userErr) throw userErr;
 
-        const appNos = Array.from(new Set((userRows || [])
-          .map((row) => (row.app_no || "").trim())
-          .filter(Boolean)))
-          .slice(0, MAX_SHORTCUTS);
+        const allowedRows = (userRows || []).filter((row) => row?.allowed === true);
+        const appNos = Array.from(new Set(allowedRows.map((row) => (row.app_no || "").trim()).filter(Boolean))).slice(0, MAX_SHORTCUTS);
 
-        if (!appNos.length) {
-          return { shortcuts: [], editableShortcuts: [], canEdit: false };
+        const isAdmin = (userRows || []).some((row) => row?.admin === true);
+        const canEditApps = isAdmin || allowedRows.length > 0;
+        const canEditUsers = isAdmin;
+
+        // 2) apps
+        let apps = [];
+        if (isAdmin) {
+          const { data: appsAll, error: appsErr } = await supabase
+            .from("apps")
+            .select("app_no, label, url")
+            .order("app_no", { ascending: true })
+            .limit(300);
+          if (appsErr) throw appsErr;
+          apps = appsAll || [];
+        } else if (appNos.length) {
+          const { data: appRows, error: appErr } = await supabase
+            .from("apps")
+            .select("app_no, label, url")
+            .in("app_no", appNos);
+          if (appErr) throw appErr;
+          apps = appRows || [];
         }
 
-        const { data: appRows, error: appErr } = await supabase
-          .from("apps")
-          .select("app_no, label, url")
-          .in("app_no", appNos);
-
-        if (appErr) throw appErr;
-
-        const appMap = new Map((appRows || []).map((row) => [row.app_no, { label: row.label, url: row.url }]));
-        const editableShortcuts = appNos
+        // shortcuts (display only allowed rows)
+        const appMap = new Map((apps || []).map((row) => [row.app_no, { label: row.label, url: row.url }]));
+        const shortcuts = appNos
           .map((no) => {
-            const app = appMap.get(no) || {};
-            return { app_no: no, label: app.label || "", url: app.url || "" };
+            const app = appMap.get(no);
+            return app ? { app_no: no, label: app.label || "", url: app.url || "" } : null;
           })
-          .slice(0, MAX_SHORTCUTS);
+          .filter((row) => row && row.label && row.url);
 
-        const shortcuts = editableShortcuts.filter((item) => item.label && item.url);
-        const canEdit = (userRows || []).some((row) => row?.editor === true) || Boolean((userRows || []).length);
+        // 3) user_apps (full) for admin
+        let userApps = [];
+        if (isAdmin) {
+          const { data: uaRows, error: uaErr } = await supabase
+            .from("user_apps")
+            .select("email, app_no, allowed, editor, admin")
+            .order("email", { ascending: true })
+            .limit(300);
+          if (uaErr) throw uaErr;
+          userApps = uaRows || [];
+        }
 
         console.log(`Supabase user_apps for ${target}:`, userRows);
         console.log(`Resolved shortcuts:`, shortcuts);
-        return { shortcuts, editableShortcuts, canEdit };
+        return { shortcuts, apps, userApps, isAdmin, canEditApps, canEditUsers };
       } catch (err) {
         console.error("Unexpected error fetching shortcuts", err);
-        return { shortcuts: [], editableShortcuts: [], canEdit: false };
+        return { shortcuts: [], apps: [], userApps: [], isAdmin: false, canEditApps: false, canEditUsers: false };
       }
     };
 
     const loadAndRenderShortcuts = async (email, options = {}) => {
       statusEl.textContent = "リンクを取得しています...";
-      const { shortcuts, editableShortcuts, canEdit } = await fetchShortcuts(email);
+      const data = await fetchAppData(email);
 
-      latestContext = { email, shortcuts, editableShortcuts, canEdit };
+      latestContext = { email, ...data };
 
-      if (!shortcuts.length) {
+      if (!(data.shortcuts || []).length) {
         console.warn("No shortcuts from sheet; showing fallback links.");
       }
 
-      const wantsEdit = (options.preferEditMode && canEdit) || (canEdit && getWantsEditParam());
-      if (wantsEdit) {
-        renderEditor(latestContext);
+      const mode = options.preferEditMode || getEditMode();
+      if (mode === "users" && data.canEditUsers) {
+        renderUserManager(latestContext);
+        return;
+      }
+      if (mode === "apps" && data.canEditApps) {
+        renderAppManager(latestContext);
         return;
       }
 
-      if (!canEdit) {
-        setEditParam(false);
+      if (!data.canEditApps && !data.canEditUsers) {
+        setEditMode("");
       }
-      renderSignedIn(email, shortcuts, canEdit);
+      renderSignedIn({ ...data, email });
     };
 
     const syncSession = async () => {
